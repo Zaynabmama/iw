@@ -12,11 +12,23 @@ from openpyxl.utils import get_column_letter
 from openpyxl.utils.dataframe import dataframe_to_rows
 
 from msinvoice_processor import process_ms_invoice_file, validate_input_file, OUTPUT_HEADER
-from msinvoice_srcl import create_ms_srcl_file
+from msinvoice_srcl import build_kuwait_exchange_lookup, create_ms_srcl_file
 
 st.set_page_config(page_title="MS Invoice Tool", layout="wide")
 
 st.title("MS Invoice Tool")
+
+
+def normalize_date_key(value) -> str:
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    text_value = str(value).strip()
+    if not text_value:
+        return ""
+    try:
+        return pd.to_datetime(value).strftime("%Y-%m-%d")
+    except (ValueError, TypeError):
+        return text_value
 
 # Instructions
 st.markdown(
@@ -85,10 +97,37 @@ if uploaded_file:
         gross_values = pd.to_numeric(output_df["Gross Value"], errors="coerce")
         positive_df = output_df[gross_values >= 0].copy()
         negative_df = output_df[gross_values < 0].copy()
+        preview_df = positive_df[OUTPUT_HEADER].copy()
+
+        kuwait_negative_df = negative_df[negative_df["Document Location"] == "WT000"].copy()
+        kuwait_rate_lookup, kuwait_negative_dates, kuwait_ambiguous_dates = build_kuwait_exchange_lookup(df)
+        ambiguous_negative_dates = [date_key for date_key in kuwait_negative_dates if date_key in kuwait_ambiguous_dates]
+        unresolved_kuwait_dates = sorted(
+            {
+                str(date_key)
+                for date_key in kuwait_negative_df.get("_Source Invoice Date", pd.Series(dtype=object)).map(normalize_date_key)
+                if date_key and date_key not in kuwait_rate_lookup
+            }
+        )
+        kuwait_manual_rate = None
+        if not kuwait_negative_df.empty:
+            kuwait_rate_input = st.text_input(
+                "Kuwait SRCL exchange rate override",
+                help="Used only for Kuwait negative rows when an exact same-date Kuwait positive exchange rate is not available.",
+            ).strip()
+            if kuwait_rate_input:
+                try:
+                    kuwait_manual_rate = float(kuwait_rate_input)
+                    if kuwait_manual_rate <= 0:
+                        st.error("Kuwait SRCL exchange rate must be greater than 0.")
+                        kuwait_manual_rate = None
+                except ValueError:
+                    st.error("Kuwait SRCL exchange rate must be a valid number.")
+                    kuwait_manual_rate = None
         
         # Display preview
         st.subheader("Preview of Output")
-        st.dataframe(positive_df.head(10), use_container_width=True)
+        st.dataframe(preview_df.head(10), use_container_width=True)
         
         # Create Excel file for download
         output_buffer = io.BytesIO()
@@ -100,7 +139,7 @@ if uploaded_file:
         ws.append(OUTPUT_HEADER)
         
         # Write data
-        for _, row in positive_df.iterrows():
+        for _, row in preview_df.iterrows():
             row_list = [row.get(col, "") for col in OUTPUT_HEADER]
             ws.append(row_list)
         
@@ -129,18 +168,36 @@ if uploaded_file:
         )
 
         if not negative_df.empty:
-            srcl_buffer = create_ms_srcl_file(negative_df)
-            st.download_button(
-                label="⬇️ Download SRCL File",
-                data=srcl_buffer.getvalue(),
-                file_name="ms_srcl_file.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
+            if ambiguous_negative_dates and kuwait_manual_rate is None:
+                st.error(
+                    "SRCL was not generated because Kuwait has multiple positive exchange rates on these dates: "
+                    + ", ".join(ambiguous_negative_dates)
+                    + ". Enter a Kuwait SRCL exchange rate override to continue."
+                )
+            elif unresolved_kuwait_dates and kuwait_manual_rate is None:
+                st.error(
+                    "SRCL was not generated because Kuwait negative rows were found without a same-date Kuwait "
+                    "positive exchange rate on these dates: "
+                    + ", ".join(unresolved_kuwait_dates)
+                    + ". Enter a Kuwait SRCL exchange rate override to continue."
+                )
+            else:
+                srcl_buffer = create_ms_srcl_file(
+                    negative_df,
+                    kuwait_rate_lookup=kuwait_rate_lookup,
+                    kuwait_manual_rate=kuwait_manual_rate,
+                )
+                st.download_button(
+                    label="⬇️ Download SRCL File",
+                    data=srcl_buffer.getvalue(),
+                    file_name="ms_srcl_file.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
         
         # Show full data option
         if st.checkbox("Show full dataset"):
             st.subheader("Complete Output Data")
-            st.dataframe(positive_df, use_container_width=True)
+            st.dataframe(preview_df, use_container_width=True)
         
     except Exception as e:
         st.error(f"❌ Error processing file: {str(e)}")

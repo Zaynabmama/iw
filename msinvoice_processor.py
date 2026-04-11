@@ -317,6 +317,7 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             out_row["Customer Name"] = str(row.get("Customer Name", "")).strip()
             
             # Dates
+            out_row["_Source Invoice Date"] = row.get("Invoice Date", "")
             out_row["Invoice Date"] = today
             out_row["Delivery Date"] = today
             out_row["Annotation"] = ""
@@ -453,7 +454,8 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
         if col not in output_df.columns:
             output_df[col] = ""
     
-    output_df = output_df[OUTPUT_HEADER]
+    helper_columns = [col for col in output_df.columns if col.startswith("_")]
+    output_df = output_df[OUTPUT_HEADER + helper_columns]
     
     return output_df, errors
 
