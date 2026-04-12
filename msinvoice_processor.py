@@ -184,16 +184,16 @@ def find_column_with_prefix(df: pd.DataFrame, prefix: str) -> Optional[str]:
     return None
 
 
-def get_item_code(charge_description: str) -> str:
-    """Match ITEM Code from Charge Description using keyword mapping (case-sensitive)"""
-    if pd.isna(charge_description):
+def get_item_code(input_item_code: str) -> str:
+    """Map uploaded ITEM Code to output ITEM Code using substring matching."""
+    if pd.isna(input_item_code):
         return ""
     
-    desc = str(charge_description).strip()
+    item_code_value = str(input_item_code).strip().upper()
     
     for keywords, code in KEYWORD_MAP.items():
         for keyword in keywords:
-            if keyword in desc:  # Case-sensitive match
+            if str(keyword).strip().upper() in item_code_value:
                 return code
     
     return ""
@@ -357,12 +357,13 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             out_row["Billing Cycle Start Date"] = str(row.get("Billing Cycle Start Date", "")).strip()
             out_row["Billing Cycle End Date"] = str(row.get("Billing Cycle End Date", "")).strip()
             
-            # ITEM Code from Charge Description
-            charge_desc = str(row.get("Charge Description", "")).strip()
-            item_code = get_item_code(charge_desc)
+            # ITEM Code mapped from uploaded ITEM Code
+            input_item_code = str(row.get("ITEM Code", "")).strip()
+            item_code = get_item_code(input_item_code)
             out_row["ITEM Code"] = item_code
             
             # ITEM Name = Charge Description + MS Subscription ID
+            charge_desc = str(row.get("Charge Description", "")).strip()
             ms_sub_id = str(row.get("MS Subscription ID", "")).strip()
             out_row["ITEM Name"] = charge_desc + (f" ({ms_sub_id})" if ms_sub_id else "")
             

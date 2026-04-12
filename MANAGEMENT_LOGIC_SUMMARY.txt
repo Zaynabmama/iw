@@ -1,0 +1,252 @@
+The user uploads one Excel file from the platform.
+
+That single uploaded file may contain:
+- positive invoice rows
+- negative credit-note rows
+
+The tool processes the full file once, then splits the results into 2 outputs:
+
+1. MS Invoice Output
+- contains only positive invoices
+
+2. SRCL Output
+- contains only negative processed rows
+
+
+For negative rows
+
+Source behavior:
+Gross Value output comes from input Gross Value
+Cost output comes from input Unit Cost
+Rate Per Qty is calculated as Gross Value / Quantity
+
+negative rows are in  USD
+
+Charge Description is used to build ITEM Name, but not to map ITEM Code.
+
+
+The tool reads the invoice prefix and maps it to business locations and invoice
+currency.
+
+Current mapping:
+
+Invoice Prefix  Document Location  Sale Location  Delivery Location Code  Invoice Currency
+DNKW            WT000              WT000          WT200                   KWT
+DNFZ            UJ000              UJ000          UJ200                   AED
+DNQA            QA000              QA000          QA200                   QAT
+DNOM            OM000              OM000          OM200                   OMR
+DNSA            KA000              KA000          KA200                   SAR
+DNAE            TC000              TC000          TC200                   AED
+
+
+================================================================================
+ITEM CODE RULE
+================================================================================
+
+The output ITEM Code is mapped from the uploaded input "ITEM Code" column.
+
+Business rule:
+- source column for mapping = uploaded "ITEM Code"
+- the tool translates that value through a fixed mapping table
+- the mapped result is written into the output "ITEM Code"
+- if the uploaded ITEM Code does not match any configured mapping value, the
+  output ITEM Code is left blank
+
+Important clarification:
+- ITEM Code is not mapped from Charge Description
+- Charge Description is still used for ITEM Name construction
+
+
+
+
+================================================================================
+9. SRCL HEAD SHEET LOGIC
+================================================================================
+
+The SRCL head sheet creates one header row per unique final Invoice No.
+
+
+
+The current SRCL logic assumes that negative monetary values come from USD-based
+source values and must be converted into local currency before ERP upload.
+
+For SRCL item values, the tool converts:
+- Gross Value
+- Cost
+
+Then it recalculates:
+- Rate = local Gross Value / Quantity
+- Total = Quantity * Rate
+
+Important detail:
+- local Gross Value is first converted to local currency
+- local Gross Value is then rounded to 2 decimals
+- Rate is then recalculated from the rounded local Gross Value
+- Unit Cost is also converted and rounded to 2 decimals
+- Total is recalculated from the local values and written as a positive value
+
+This keeps the SRCL file aligned with local-currency ERP upload expectations.
+
+
+================================================================================
+12. FIXED SRCL EXCHANGE-RATE RULES
+================================================================================
+
+For non-Kuwait SRCL rows, the tool uses fixed conversion rules by Document
+Location.
+
+Current SRCL conversion map:
+
+Document Location  Local Currency  SRCL Conversion Rate
+UJ000              AED             0.272294078
+TC000              AED             0.272294078
+QA000              QAT             0.274725274725
+OM000              OMR             2.60078023407
+KA000              SAR             0.2666666666
+
+Conversion method:
+- local value = USD value / SRCL conversion rate
+
+
+================================================================================
+13. SPECIAL KUWAIT SRCL RULE
+================================================================================
+
+Kuwait is handled more carefully than the other locations because management
+requested that the tool must not guess a rate silently.
+
+For Kuwait negative SRCL rows, the tool does NOT use a blind fixed fallback.
+
+Instead, it follows this strict order:
+
+1. If the user enters a manual Kuwait SRCL exchange rate in the UI:
+- the manual rate is used
+
+2. If no manual rate is entered:
+- the tool searches the same uploaded file for a Kuwait positive row
+- the row must be on the exact same Invoice Date
+- the tool reads that row's uploaded Exchange Rate
+- the Kuwait SRCL lookup stores 1 / Exchange Rate
+- that derived value is used for the Kuwait SRCL conversion
+
+3. If no valid same-date Kuwait positive rate is found:
+- SRCL generation is blocked
+- the user sees an error message
+- the user must enter the Kuwait SRCL exchange rate manually
+
+4. If multiple different Kuwait positive exchange rates exist for the same
+needed date:
+- SRCL generation is blocked
+- the user sees an error message
+- the user must enter the Kuwait SRCL exchange rate manually
+
+Important:
+- there is no "use any Kuwait row in the file" fallback
+- this was intentionally avoided to reduce business risk
+
+
+================================================================================
+14. KUWAIT ERROR / CONTROL SCENARIOS
+================================================================================
+
+Scenario A: Kuwait negative row exists and exact same-date positive Kuwait rate is found
+- SRCL is generated normally
+- the found same-date Kuwait rate is used
+
+Scenario B: Kuwait negative row exists and no same-date positive Kuwait rate is found
+- SRCL is not generated
+- user sees a message asking for Kuwait SRCL exchange rate override
+
+Scenario C: Kuwait negative row exists and same-date positive Kuwait rows exist but rates conflict
+- SRCL is not generated
+- user sees a message asking for Kuwait SRCL exchange rate override
+
+Scenario D: Kuwait negative row exists and user enters manual Kuwait rate
+- SRCL is generated
+- manual Kuwait rate overrides lookup
+
+Scenario E: No Kuwait negative rows exist
+- no Kuwait special handling is needed
+- SRCL generation follows the normal non-Kuwait rules only
+
+
+================================================================================
+15. OTHER IMPORTANT EDGE CASES
+================================================================================
+
+Case 1: No negative rows in uploaded file
+- main MS Invoice file is generated
+- SRCL file is not shown
+
+Case 2: Negative rows exist but none are Kuwait
+- SRCL file is generated using the fixed non-Kuwait conversion map
+
+Case 3: Quantity is 0
+- Rate Per Qty calculation is left blank in the main processor
+- in SRCL, rate is written as 0 if quantity is 0
+
+Case 4: Missing or invalid positive Kuwait Exchange Rate on the same date
+- treated as unresolved
+- SRCL is blocked unless manual Kuwait rate is entered
+
+Case 5: Positive and negative rows exist together in one file
+- positive rows go only to main MS Invoice output
+- negative rows go only to SRCL output
+
+Case 6: Processing errors on some rows
+- tool still reports issues row by row
+- successfully processed rows continue
+
+
+================================================================================
+16. INPUTS, OUTPUTS, AND USER EXPERIENCE
+================================================================================
+
+What the user uploads:
+- one MS input Excel file
+
+What the user receives:
+- one MS Invoice Excel file for positive rows
+- one SRCL Excel file for negative rows, if negative rows exist and SRCL
+  conditions are satisfied
+
+What the user may be asked for:
+- only Kuwait SRCL exchange rate override, and only when needed
+
+What the user may see as a blocking message:
+- Kuwait negative rows exist but no exact same-date Kuwait positive exchange
+  rate could be safely derived
+- or multiple same-date Kuwait positive rates conflict
+
+
+================================================================================
+17. CONTROL PHILOSOPHY
+================================================================================
+
+The current tool was intentionally designed to avoid unsafe hidden fallbacks.
+
+In plain terms:
+- direct business rules are preferred over guesswork
+- negative/positive handling is explicit
+- Kuwait SRCL handling is controlled and auditable
+- ambiguous Kuwait cases are blocked instead of being auto-resolved
+
+This reduces the chance of incorrect ERP uploads caused by silent assumptions.
+
+
+================================================================================
+18. CURRENT MANAGEMENT TAKEAWAY
+================================================================================
+
+The tool now behaves as a controlled split-processing workflow:
+
+- one uploaded file
+- positive invoices go to the main MS Invoice output
+- negative credit notes go to SRCL only
+- SRCL values are converted into local currency before export
+- Kuwait requires either:
+  - exact same-date positive exchange-rate evidence from the uploaded file, or
+  - manual user confirmation via rate entry
+
+This design aims to protect financial accuracy while keeping the operational
+workflow simple for users.

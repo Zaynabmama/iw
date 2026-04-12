@@ -30,28 +30,7 @@ def normalize_date_key(value) -> str:
     except (ValueError, TypeError):
         return text_value
 
-# Instructions
-st.markdown(
-    """
-    <div style="
-        padding: 18px 20px;
-        background: linear-gradient(90deg, #fff3cd, #ffeeba);
-        border: 2px solid #ffcc00;
-        border-radius: 10px;
-        font-weight: 700;
-        color: #7a5a00;
-        font-size: 16px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-        margin-bottom: 12px;
-    ">
-        <span style="font-size: 18px;">📋 Instructions:</span>
-        <span style="margin-left: 8px;">
-        Upload your MS invoice Excel file and the tool will transform it to the required output format.
-        </span>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+
 
 # File upload
 uploaded_file = st.file_uploader(
@@ -88,11 +67,7 @@ if uploaded_file:
             if len(processing_errors) > 10:
                 st.warning(f"  ... and {len(processing_errors) - 10} more")
         
-        # Metrics
-        col1, col2, col3 = st.columns(3)
-        col1.metric("📊 Total Rows", len(output_df))
-        col2.metric("✅ Successfully Processed", len(output_df) - len(processing_errors))
-        col3.metric("❌ Failed Rows", len(processing_errors))
+
 
         gross_values = pd.to_numeric(output_df["Gross Value"], errors="coerce")
         positive_df = output_df[gross_values >= 0].copy()
@@ -125,10 +100,7 @@ if uploaded_file:
                     st.error("Kuwait SRCL exchange rate must be a valid number.")
                     kuwait_manual_rate = None
         
-        # Display preview
-        st.subheader("Preview of Output")
-        st.dataframe(preview_df.head(10), use_container_width=True)
-        
+
         # Create Excel file for download
         output_buffer = io.BytesIO()
         wb = Workbook()
@@ -193,11 +165,7 @@ if uploaded_file:
                     file_name="ms_srcl_file.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
-        
-        # Show full data option
-        if st.checkbox("Show full dataset"):
-            st.subheader("Complete Output Data")
-            st.dataframe(preview_df, use_container_width=True)
+
         
     except Exception as e:
         st.error(f"❌ Error processing file: {str(e)}")
