@@ -16,6 +16,22 @@ from msinvoice_srcl import build_kuwait_exchange_lookup, create_ms_srcl_file
 
 st.set_page_config(page_title="MS Invoice Tool", layout="wide")
 
+st.markdown(
+    """
+    <style>
+    [data-testid="stToolbar"],
+    [data-testid="stHeaderActionElements"],
+    .stAppDeployButton,
+    [data-testid="stDecoration"],
+    [data-testid="stStatusWidget"],
+    [data-testid="stFloatingActionButton"] {
+        display: none !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 st.title("MS Invoice Tool")
 
 
