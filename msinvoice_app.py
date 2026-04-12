@@ -130,6 +130,17 @@ if uploaded_file:
         for _, row in preview_df.iterrows():
             row_list = [row.get(col, "") for col in OUTPUT_HEADER]
             ws.append(row_list)
+
+        date_columns = {
+            "Invoice Date",
+            "Delivery Date",
+            "Billing Cycle Start Date",
+            "Billing Cycle End Date",
+        }
+        for col_idx, col_name in enumerate(OUTPUT_HEADER, start=1):
+            if col_name in date_columns:
+                for row_idx in range(2, ws.max_row + 1):
+                    ws.cell(row=row_idx, column=col_idx).number_format = "dd/mm/yyyy"
         
         # Auto-adjust column widths
         for column in ws.columns:

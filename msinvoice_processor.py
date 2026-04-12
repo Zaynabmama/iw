@@ -168,9 +168,9 @@ def extract_payment_term(payment_method: str) -> str:
 def get_exchange_rate(document_location: str, uploaded_exchange_rate: float = None) -> float:
     """Calculate exchange rate based on Document Location"""
     if document_location == "WT000":
-        # Special case: round(1/Exchange Rate / 2)
+        # Special case for Kuwait: 1 / uploaded Exchange Rate
         if uploaded_exchange_rate and uploaded_exchange_rate > 0:
-            return round(1 / uploaded_exchange_rate / 2, 10)
+            return 1 / uploaded_exchange_rate
         return ""
     
     return EXCHANGE_RATE_MAP.get(document_location, "")
@@ -199,34 +199,55 @@ def get_item_code(input_item_code: str) -> str:
     return ""
 
 
-def round_to_2_decimals(value) -> str:
-    """Round value to 2 decimals, return empty string if NaN or 0"""
+def round_to_2_decimals(value):
+    """Round value to 2 decimals and return a numeric value, or empty string if invalid."""
     try:
         if pd.isna(value):
             return ""
         num = float(value)
-        rounded = round(num, 2)
-        return str(rounded)
+        return round(num, 2)
     except (ValueError, TypeError):
         return ""
 
 
-def calculate_rate_per_qty(gross_value_str, quantity) -> str:
-    """Calculate Rate Per Qty as Gross Value / Quantity, keeping empty if Quantity is 0"""
+def calculate_rate_per_qty(gross_value_value, quantity):
+    """Calculate Rate Per Qty as Gross Value / Quantity, keeping empty if Quantity is 0."""
     try:
         if pd.isna(quantity) or quantity == 0:
             return ""
         
-        gross_value = float(gross_value_str) if isinstance(gross_value_str, str) else float(gross_value_str)
+        gross_value = float(gross_value_value)
         qty = float(quantity)
         
         if qty == 0:
             return ""
         
-        rate = round(gross_value / qty, 2)
-        return str(rate)
+        return round(gross_value / qty, 2)
     except (ValueError, TypeError, ZeroDivisionError):
         return ""
+
+
+def format_date_only(value) -> str:
+    """Return a date object for date-like values, without timestamps."""
+    if pd.isna(value):
+        return ""
+    text_value = str(value).strip()
+    if text_value.lower() in ["", "nan", "none", "nat"]:
+        return ""
+    try:
+        return pd.to_datetime(value).date()
+    except (ValueError, TypeError):
+        return ""
+
+
+def clean_text_value(value) -> str:
+    """Return empty string for blank/NaN-like text values."""
+    if pd.isna(value):
+        return ""
+    text_value = str(value).strip()
+    if text_value.lower() in ["", "nan", "none", "nat"]:
+        return ""
+    return text_value
 
 
 def calculate_tax_value(gross_value: float, tax_percent: float) -> str:
@@ -296,7 +317,7 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
     """
     errors = []
     output_rows = []
-    today = datetime.today().strftime("%d/%m/%Y")
+    today = datetime.today().date()
     
     for idx, row in df.iterrows():
         try:
@@ -354,8 +375,8 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             
             # Subscription
             out_row["Subscription Id"] = str(row.get("MS Subscription ID", "")).strip()
-            out_row["Billing Cycle Start Date"] = str(row.get("Billing Cycle Start Date", "")).strip()
-            out_row["Billing Cycle End Date"] = str(row.get("Billing Cycle End Date", "")).strip()
+            out_row["Billing Cycle Start Date"] = format_date_only(row.get("Billing Cycle Start Date", ""))
+            out_row["Billing Cycle End Date"] = format_date_only(row.get("Billing Cycle End Date", ""))
             
             # ITEM Code mapped from uploaded ITEM Code
             input_item_code = str(row.get("ITEM Code", "")).strip()
@@ -426,8 +447,8 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             out_row["ITEM Tax Value"] = tax_value
             
             # LPO and End User (as-is from input)
-            out_row["LPO Number"] = str(row.get("LPO Number", "")).strip()
-            out_row["End User"] = str(row.get("End User", "")).strip()
+            out_row["LPO Number"] = clean_text_value(row.get("LPO Number", ""))
+            out_row["End User"] = clean_text_value(row.get("End User", ""))
             
             # Cost source follows the same positive/credit-note split as Gross Value
             cost_col = find_column_with_prefix(df, "Unit Cost Transaction Currency")
