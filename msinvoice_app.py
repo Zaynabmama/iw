@@ -11,7 +11,12 @@ from openpyxl.styles import PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.dataframe import dataframe_to_rows
 
-from msinvoice_processor import process_ms_invoice_file, validate_input_file, OUTPUT_HEADER
+from msinvoice_processor import (
+    process_ms_invoice_file,
+    standardize_input_columns,
+    validate_input_file,
+    OUTPUT_HEADER,
+)
 from msinvoice_srcl import build_kuwait_exchange_lookup, create_ms_srcl_file
 
 st.set_page_config(page_title="MS Invoice Tool", layout="wide")
@@ -58,7 +63,7 @@ uploaded_file = st.file_uploader(
 if uploaded_file:
     try:
         # Read the Excel file
-        df = pd.read_excel(uploaded_file)
+        df = standardize_input_columns(pd.read_excel(uploaded_file))
         
         st.success(f"✅ File loaded: {uploaded_file.name} ({len(df)} rows)")
         
@@ -83,11 +88,9 @@ if uploaded_file:
             if len(processing_errors) > 10:
                 st.warning(f"  ... and {len(processing_errors) - 10} more")
         
-
-
-        gross_values = pd.to_numeric(output_df["Gross Value"], errors="coerce")
-        positive_df = output_df[gross_values >= 0].copy()
-        negative_df = output_df[gross_values < 0].copy()
+        invoice_types = output_df.get("_Invoice Type", pd.Series("", index=output_df.index)).fillna("").astype(str).str.strip().str.lower()
+        positive_df = output_df[invoice_types == "debit invoice"].copy()
+        negative_df = output_df[invoice_types == "credit invoice"].copy()
         preview_df = positive_df[OUTPUT_HEADER].copy()
 
         kuwait_negative_df = negative_df[negative_df["Document Location"] == "WT000"].copy()

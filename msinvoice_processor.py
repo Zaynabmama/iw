@@ -68,7 +68,7 @@ CURRENCY_MAP = {
 }
 
 EXCHANGE_RATE_MAP = {
-    "UJ000": 0.272294078,
+    "UJ000": 1,
     "TC000": 0.272294078,
     "QA000": 0.274725274725,
     "OM000": 2.60078023407,
@@ -109,6 +109,54 @@ OUTPUT_HEADER = [
 
 
 # === Helper Functions ===
+
+def normalize_input_column_name(column_name) -> str:
+    """Normalize uploaded headers so minor Excel formatting differences do not break matching."""
+    if pd.isna(column_name):
+        return ""
+    normalized = str(column_name).replace("\ufeff", " ")
+    normalized = re.sub(r"\s+", " ", normalized).strip().lower()
+    return normalized
+
+
+def standardize_input_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Rename known input columns to their canonical names using normalized header matching."""
+    canonical_columns = [
+        "Invoice No.",
+        "Customer Code",
+        "Customer Name",
+        "Currency Code",
+        "Invoice Type",
+        "Payment Method",
+        "MS Subscription ID",
+        "Billing Cycle Start Date",
+        "Billing Cycle End Date",
+        "Charge Description",
+        "Quantity",
+        "LPO Number",
+        "End User",
+        "End Customer Country",
+        "Invoice Date",
+        "Exchange Rate",
+        "Gross Value",
+        "Unit Cost",
+        "ITEM Code",
+    ]
+
+    normalized_to_canonical = {
+        normalize_input_column_name(column): column for column in canonical_columns
+    }
+    rename_map = {}
+
+    for column in df.columns:
+        canonical_name = normalized_to_canonical.get(normalize_input_column_name(column))
+        if canonical_name and column != canonical_name:
+            rename_map[column] = canonical_name
+
+    if not rename_map:
+        return df
+
+    return df.rename(columns=rename_map)
 
 def get_document_location(invoice_no: str) -> str:
     """Extract Document Location from Invoice No. prefix"""
@@ -215,14 +263,14 @@ def calculate_rate_per_qty(gross_value_value, quantity):
     try:
         if pd.isna(quantity) or quantity == 0:
             return ""
-        
+
         gross_value = float(gross_value_value)
         qty = float(quantity)
-        
+
         if qty == 0:
             return ""
-        
-        return round(gross_value / qty, 2)
+
+        return gross_value / qty
     except (ValueError, TypeError, ZeroDivisionError):
         return ""
 
@@ -250,6 +298,20 @@ def clean_text_value(value) -> str:
     return text_value
 
 
+def build_end_user_value(end_user, end_customer_country) -> str:
+    """Combine End User and End Customer Country without emitting NaN-like text."""
+    end_user_value = clean_text_value(end_user)
+    country_value = clean_text_value(end_customer_country)
+
+    if end_user_value and country_value:
+        return f"{end_user_value} ; {country_value}"
+    if end_user_value:
+        return end_user_value
+    if country_value:
+        return country_value
+    return ""
+
+
 def calculate_tax_value(gross_value: float, tax_percent: float) -> str:
     """Calculate Tax Value = Gross Value * Tax %"""
     try:
@@ -259,18 +321,21 @@ def calculate_tax_value(gross_value: float, tax_percent: float) -> str:
         gv = float(gross_value)
         tp = float(tax_percent) if isinstance(tax_percent, str) else float(tax_percent)
         
-        tax_val = round(gv * tp / 100, 2)
-        return str(tax_val)
+        return round(gv * tp / 100, 2)
     except (ValueError, TypeError):
         return ""
 
 
 def is_negative_credit_note(row: pd.Series) -> bool:
-    """Use input Gross Value sign to detect credit-note rows."""
-    try:
-        return float(row.get("Gross Value", 0) or 0) < 0
-    except (ValueError, TypeError):
+    """Use Invoice Type only to detect credit-note rows."""
+    invoice_type = clean_text_value(row.get("Invoice Type", "")).lower()
+    if invoice_type == "credit invoice":
+        return True
+    if invoice_type == "debit invoice":
         return False
+    raise ValueError(
+        "Invoice Type must be either 'Credit Invoice' or 'Debit Invoice'."
+    )
 
 
 def apply_invoice_number_versioning(output_df: pd.DataFrame) -> pd.DataFrame:
@@ -315,6 +380,7 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
     Returns:
         Tuple of (output_df, errors_list)
     """
+    df = standardize_input_columns(df)
     errors = []
     output_rows = []
     today = datetime.today().date()
@@ -336,6 +402,7 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             # Customer info (as-is from input)
             out_row["Customer Code"] = str(row.get("Customer Code", "")).strip()
             out_row["Customer Name"] = str(row.get("Customer Name", "")).strip()
+            out_row["_Invoice Type"] = clean_text_value(row.get("Invoice Type", ""))
             
             # Dates
             out_row["_Source Invoice Date"] = row.get("Invoice Date", "")
@@ -448,7 +515,10 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             
             # LPO and End User (as-is from input)
             out_row["LPO Number"] = clean_text_value(row.get("LPO Number", ""))
-            out_row["End User"] = clean_text_value(row.get("End User", ""))
+            out_row["End User"] = build_end_user_value(
+                row.get("End User", ""),
+                row.get("End Customer Country", ""),
+            )
             
             # Cost source follows the same positive/credit-note split as Gross Value
             cost_col = find_column_with_prefix(df, "Unit Cost Transaction Currency")
@@ -492,9 +562,11 @@ def validate_input_file(df: pd.DataFrame) -> Tuple[bool, list]:
     Returns:
         Tuple of (is_valid, error_messages)
     """
+    df = standardize_input_columns(df)
+
     required_cols = [
         "Invoice No.", "Customer Code", "Customer Name", "Currency Code",
-        "Payment Method", "MS Subscription ID", "Billing Cycle Start Date",
+        "Invoice Type", "Payment Method", "MS Subscription ID", "Billing Cycle Start Date",
         "Billing Cycle End Date", "Charge Description", "Quantity", "LPO Number", "End User"
     ]
     

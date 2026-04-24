@@ -23,6 +23,8 @@ def _get_mpc_billdate(document_location: str) -> str:
         return "QAR - 28"
     if doc_loc == "WT000":
         return "KWT - 28"
+    if doc_loc == "OM000":
+        return "OMN - 28"
     return ""
 
 
@@ -114,6 +116,9 @@ def _convert_usd_to_local(
     amount_value = float(amount or 0)
     if rate == 0:
         return 0.0
+    if str(document_location or "").strip().upper() == "WT000":
+        # Kuwait lookup/manual rates are stored as inverted values, so conversion multiplies by the rate.
+        return amount_value * rate
     return amount_value / rate
 
 
