@@ -158,6 +158,13 @@ def standardize_input_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     return df.rename(columns=rename_map)
 
+
+def drop_last_input_row(df: pd.DataFrame) -> pd.DataFrame:
+    """Ignore the last row of the uploaded file, if any rows exist."""
+    if df.empty:
+        return df
+    return df.iloc[:-1].copy()
+
 def get_document_location(invoice_no: str) -> str:
     """Extract Document Location from Invoice No. prefix"""
     if pd.isna(invoice_no):
@@ -393,6 +400,7 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
         Tuple of (output_df, errors_list)
     """
     df = standardize_input_columns(df)
+    df = drop_last_input_row(df)
     errors = []
     output_rows = []
     today = datetime.today().date()
@@ -575,6 +583,7 @@ def validate_input_file(df: pd.DataFrame) -> Tuple[bool, list]:
         Tuple of (is_valid, error_messages)
     """
     df = standardize_input_columns(df)
+    df = drop_last_input_row(df)
 
     required_cols = [
         "Invoice No.", "Customer Code", "Customer Name", "Currency Code",
