@@ -298,6 +298,18 @@ def clean_text_value(value) -> str:
     return text_value
 
 
+def find_blank_rows(df: pd.DataFrame, column_name: str) -> list:
+    """Return 1-based Excel row numbers for blank/NaN-like values in a required text column."""
+    if column_name not in df.columns:
+        return []
+
+    blank_rows = []
+    for idx, value in df[column_name].items():
+        if clean_text_value(value) == "":
+            blank_rows.append(idx + 2)
+    return blank_rows
+
+
 def build_end_user_value(end_user, end_customer_country) -> str:
     """Combine End User and End Customer Country without emitting NaN-like text."""
     end_user_value = clean_text_value(end_user)
@@ -400,8 +412,8 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             out_row["Delivery Location Code"] = get_delivery_location_code(doc_location)
             
             # Customer info (as-is from input)
-            out_row["Customer Code"] = str(row.get("Customer Code", "")).strip()
-            out_row["Customer Name"] = str(row.get("Customer Name", "")).strip()
+            out_row["Customer Code"] = clean_text_value(row.get("Customer Code", ""))
+            out_row["Customer Name"] = clean_text_value(row.get("Customer Name", ""))
             out_row["_Invoice Type"] = clean_text_value(row.get("Invoice Type", ""))
             
             # Dates
@@ -441,7 +453,7 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             out_row["HEADER Expense Value"] = ""
             
             # Subscription
-            out_row["Subscription Id"] = str(row.get("MS Subscription ID", "")).strip()
+            out_row["Subscription Id"] = clean_text_value(row.get("MS Subscription ID", ""))
             out_row["Billing Cycle Start Date"] = format_date_only(row.get("Billing Cycle Start Date", ""))
             out_row["Billing Cycle End Date"] = format_date_only(row.get("Billing Cycle End Date", ""))
             
@@ -451,8 +463,8 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             out_row["ITEM Code"] = item_code
             
             # ITEM Name = Charge Description + MS Subscription ID
-            charge_desc = str(row.get("Charge Description", "")).strip()
-            ms_sub_id = str(row.get("MS Subscription ID", "")).strip()
+            charge_desc = clean_text_value(row.get("Charge Description", ""))
+            ms_sub_id = clean_text_value(row.get("MS Subscription ID", ""))
             out_row["ITEM Name"] = charge_desc + (f" ({ms_sub_id})" if ms_sub_id else "")
             
             # Fixed ITEM fields
@@ -575,6 +587,23 @@ def validate_input_file(df: pd.DataFrame) -> Tuple[bool, list]:
     
     if missing_cols:
         errors.append(f"Missing required columns: {', '.join(missing_cols)}")
+        return False, errors
+
+    blank_customer_name_rows = find_blank_rows(df, "Customer Name")
+    if blank_customer_name_rows:
+        errors.append(
+            "Customer Name is mandatory and cannot be blank. "
+            f"Blank value found on row(s): {', '.join(map(str, blank_customer_name_rows))}"
+        )
+
+    blank_end_user_rows = find_blank_rows(df, "End User")
+    if blank_end_user_rows:
+        errors.append(
+            "End User is mandatory and cannot be blank. "
+            f"Blank value found on row(s): {', '.join(map(str, blank_end_user_rows))}"
+        )
+
+    if errors:
         return False, errors
     
     return True, []
