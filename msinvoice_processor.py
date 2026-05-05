@@ -239,12 +239,12 @@ def find_column_with_prefix(df: pd.DataFrame, prefix: str) -> Optional[str]:
     return None
 
 
-def get_item_code(input_item_code: str) -> str:
-    """Map uploaded ITEM Code to output ITEM Code using substring matching."""
-    if pd.isna(input_item_code):
+def get_item_code(mapping_source: str) -> str:
+    """Map Charge Description text to output ITEM Code using substring matching."""
+    if pd.isna(mapping_source):
         return ""
     
-    item_code_value = str(input_item_code).strip().upper()
+    item_code_value = str(mapping_source).strip().upper()
     
     for keywords, code in KEYWORD_MAP.items():
         for keyword in keywords:
@@ -465,13 +465,12 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             out_row["Billing Cycle Start Date"] = format_date_only(row.get("Billing Cycle Start Date", ""))
             out_row["Billing Cycle End Date"] = format_date_only(row.get("Billing Cycle End Date", ""))
             
-            # ITEM Code mapped from uploaded ITEM Code
-            input_item_code = str(row.get("ITEM Code", "")).strip()
-            item_code = get_item_code(input_item_code)
+            # ITEM Code mapped from Charge Description
+            charge_desc = clean_text_value(row.get("Charge Description", ""))
+            item_code = get_item_code(charge_desc)
             out_row["ITEM Code"] = item_code
             
             # ITEM Name = Charge Description + MS Subscription ID
-            charge_desc = clean_text_value(row.get("Charge Description", ""))
             ms_sub_id = clean_text_value(row.get("MS Subscription ID", ""))
             out_row["ITEM Name"] = charge_desc + (f" ({ms_sub_id})" if ms_sub_id else "")
             
