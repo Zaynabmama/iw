@@ -76,7 +76,7 @@ EXCHANGE_RATE_MAP = {
 }
 
 KEYWORD_MAP = {
-    ("windows server", "window server", "MSPER-CNS"): "MSPER-CNS",
+    ("windows server", "window server","Office LTSC Standard", "MSPER-CNS"): "MSPER-CNS",
     ("azure subscription", "MSAZ-CNS"): "MSAZ-CNS",
     ("google workspace", "GL-WSP-CNS"): "GL-WSP-CNS",
     ("m365", "microsoft 365", "office 365", "exchange online", "Microsoft Defender for Endpoint P1", "MS-CNS"): "MS-CNS",
