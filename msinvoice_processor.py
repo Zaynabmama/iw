@@ -461,7 +461,9 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             out_row["HEADER Expense Value"] = ""
             
             # Subscription
-            out_row["Subscription Id"] = clean_text_value(row.get("MS Subscription ID", ""))
+            ms_sub_id = clean_text_value(row.get("MS Subscription ID", ""))
+            subscription_id_value = ms_sub_id if ms_sub_id else "Subs ID"
+            out_row["Subscription Id"] = subscription_id_value
             out_row["Billing Cycle Start Date"] = format_date_only(row.get("Billing Cycle Start Date", ""))
             out_row["Billing Cycle End Date"] = format_date_only(row.get("Billing Cycle End Date", ""))
             
@@ -471,8 +473,7 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             out_row["ITEM Code"] = item_code
             
             # ITEM Name = Charge Description + MS Subscription ID
-            ms_sub_id = clean_text_value(row.get("MS Subscription ID", ""))
-            out_row["ITEM Name"] = charge_desc + (f" ({ms_sub_id})" if ms_sub_id else "")
+            out_row["ITEM Name"] = charge_desc + (f" ({subscription_id_value})" if subscription_id_value else "")
             
             # Fixed ITEM fields
             out_row["UOM"] = "NOS"
