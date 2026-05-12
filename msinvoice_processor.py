@@ -89,7 +89,7 @@ KEYWORD_MAP = {
     ("SQL Server 2025 Standard edition Perpetual 1 Server License (Commercial)", "sql server 2025 standard edition perpetual 1 server license", "MSPER-CNS"): "MSPER-CNS",
     ("Visual Studio Professional 2026 (Commercial)", "visual studio professional 2026", "MSPER-CNS"): "MSPER-CNS",
     ("Windows 11 Enterprise LTSC 2024 Upgrade (Commercial)", "windows 11 enterprise ltsc 2024 upgrade", "MSRI-CNS"): "MSRI-CNS",
-    ("Azure Plan Reserved Instances", "azure plan reserved instances", "MS-CNS"): "MS-CNS",
+    ("Azure Plan Reserved Instances", "azure plan reserved instances", "MSRI-CNS"): "MSRI-CNS",
     ("acronis", "AS-CNS"): "AS-CNS",
     ("windows 11 pro", "MSPER-CNS"): "MSPER-CNS",
     ("power bi", "MS-CNS"): "MS-CNS",
