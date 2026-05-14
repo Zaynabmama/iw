@@ -6,6 +6,7 @@ Handles data transformation, validations, and calculations
 import pandas as pd
 import re
 from datetime import datetime
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Dict, Tuple, Optional
 import logging
 
@@ -265,13 +266,13 @@ def get_item_code(mapping_source: str) -> str:
 
 
 def round_to_2_decimals(value):
-    """Round value to 2 decimals and return a numeric value, or empty string if invalid."""
+    """Round value to 2 decimals using Excel-style half-up rounding."""
     try:
         if pd.isna(value):
             return ""
-        num = float(value)
-        return round(num, 2)
-    except (ValueError, TypeError):
+        decimal_value = Decimal(str(value))
+        return float(decimal_value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+    except (ValueError, TypeError, InvalidOperation):
         return ""
 
 
@@ -289,6 +290,23 @@ def calculate_rate_per_qty(gross_value_value, quantity):
 
         return gross_value / qty
     except (ValueError, TypeError, ZeroDivisionError):
+        return ""
+
+
+def calculate_gross_value(rate_per_qty, exchange_rate, quantity):
+    """Calculate Gross Value = ROUND(ROUND(rate_per_qty * exchange_rate, 2) * quantity, 2) using half-up rounding."""
+    try:
+        if pd.isna(rate_per_qty) or pd.isna(exchange_rate) or pd.isna(quantity):
+            return ""
+
+        r = Decimal(str(rate_per_qty))
+        e = Decimal(str(exchange_rate))
+        q = Decimal(str(quantity))
+
+        inner = (r * e).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        gross = (inner * q).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        return float(gross)
+    except (ValueError, TypeError, InvalidOperation):
         return ""
 
 
@@ -495,23 +513,13 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             out_row["Quantity"] = quantity
             out_row["Qty Loose"] = 0
             
-            # Positive rows keep existing local-currency logic; credit notes use input Gross Value/Unit Cost
-            gross_value_col = find_column_with_prefix(df, "Gross Value Transaction Currency")
-            is_credit_note = is_negative_credit_note(row)
-
-            if is_credit_note:
-                gross_value_raw = row.get("Gross Value", 0)
-            elif gross_value_col:
-                gross_value_raw = row.get(gross_value_col, 0)
-            else:
-                gross_value_raw = ""
-
-            if gross_value_raw != "":
-                gross_value_rounded = round_to_2_decimals(gross_value_raw)
-                out_row["Gross Value"] = gross_value_rounded
-                
-                # Rate Per Qty = Gross Value / Quantity
-                rate_per_qty = calculate_rate_per_qty(gross_value_rounded, quantity)
+            # Calculate Gross Value using the formula from input Rate Per Qty and Exchange Rate
+            rate_per_qty_input = row.get("Rate Per Qty", "")
+            exchange_rate_input = row.get("Exchange Rate", "")
+            if rate_per_qty_input != "" and exchange_rate_input != "" and quantity != "" and quantity != 0:
+                gross_value = calculate_gross_value(rate_per_qty_input, exchange_rate_input, quantity)
+                out_row["Gross Value"] = gross_value
+                rate_per_qty = calculate_rate_per_qty(gross_value, quantity)
                 out_row["Rate Per Qty"] = rate_per_qty
             else:
                 out_row["Gross Value"] = ""
@@ -552,6 +560,7 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             
             # Cost source follows the same positive/credit-note split as Gross Value
             cost_col = find_column_with_prefix(df, "Unit Cost Transaction Currency")
+            is_credit_note = is_negative_credit_note(row)
             if is_credit_note:
                 cost_value = round_to_2_decimals(row.get("Unit Cost", ""))
                 out_row["Cost"] = cost_value

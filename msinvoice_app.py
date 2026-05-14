@@ -93,6 +93,7 @@ if uploaded_file:
         negative_df = output_df[invoice_types == "credit invoice"].copy()
         preview_df = positive_df[OUTPUT_HEADER].copy()
 
+
         kuwait_negative_df = negative_df[negative_df["Document Location"] == "WT000"].copy()
         kuwait_rate_lookup, kuwait_negative_dates, kuwait_ambiguous_dates = build_kuwait_exchange_lookup(df)
         ambiguous_negative_dates = [date_key for date_key in kuwait_negative_dates if date_key in kuwait_ambiguous_dates]
