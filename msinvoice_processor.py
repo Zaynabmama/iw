@@ -4,6 +4,7 @@ Handles data transformation, validations, and calculations
 """
  
 import pandas as pd
+import numpy as np
 import re
 from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -157,6 +158,10 @@ def standardize_input_columns(df: pd.DataFrame) -> pd.DataFrame:
     normalized_to_canonical = {
         normalize_input_column_name(column): column for column in canonical_columns
     }
+    alias_columns = {
+        normalize_input_column_name("Azure Consumption Description"): "Charge Description",
+    }
+    normalized_to_canonical.update(alias_columns)
     rename_map = {}
 
     for column in df.columns:
@@ -165,9 +170,27 @@ def standardize_input_columns(df: pd.DataFrame) -> pd.DataFrame:
             rename_map[column] = canonical_name
 
     if not rename_map:
-        return df
+        df = df.copy()
+    else:
+        df = df.rename(columns=rename_map)
 
-    return df.rename(columns=rename_map)
+    if df.columns.duplicated().any():
+        df = df.loc[:, ~df.columns.duplicated()]  # Keep first occurrence of duplicate columns
+
+    return df
+
+
+def get_scalar_value(value, default=""):
+    """Return a single scalar from pandas Series/ndarray if needed."""
+    if isinstance(value, pd.Series):
+        if value.empty:
+            return default
+        return value.iloc[0]
+    if isinstance(value, np.ndarray):
+        if value.size == 0:
+            return default
+        return value.flat[0]
+    return value
 
 
 def drop_last_input_row(df: pd.DataFrame) -> pd.DataFrame:
@@ -310,8 +333,52 @@ def calculate_gross_value(rate_per_qty, exchange_rate, quantity):
         return ""
 
 
+def is_azure_consumption_description(value) -> bool:
+    """Detect Azure consumption description text used to identify Azure invoice groups."""
+    if pd.isna(value):
+        return False
+    text_value = str(value).strip().lower()
+    if text_value == "":
+        return False
+    return any(keyword in text_value for keyword in [
+        "azure plan",
+        "azure consumption",
+        "azure usage",
+        "azure subscription",
+    ])
+
+
+def build_azure_group_keys(df: pd.DataFrame) -> set:
+    """Find invoice+subscription groups that should be consolidated as Azure."""
+    group_keys = set()
+    if "Invoice No." not in df.columns or "MS Subscription ID" not in df.columns or "Charge Description" not in df.columns:
+        return group_keys
+
+    for _, row in df.iterrows():
+        invoice_no = clean_text_value(get_scalar_value(row.get("Invoice No.", "")))
+        ms_sub_id = clean_text_value(get_scalar_value(row.get("MS Subscription ID", "")))
+        if invoice_no and ms_sub_id and is_azure_consumption_description(get_scalar_value(row.get("Charge Description", ""))):
+            group_keys.add((invoice_no, ms_sub_id))
+
+    return group_keys
+
+
+def sum_group_gross_values(group_df: pd.DataFrame) -> Decimal:
+    """Sum input Gross Value from a group using Decimal precision."""
+    total = Decimal("0")
+    for value in group_df.get("Gross Value", []):
+        if pd.isna(value) or str(value).strip() == "":
+            continue
+        try:
+            total += Decimal(str(value))
+        except (ValueError, TypeError, InvalidOperation):
+            continue
+    return total
+
+
 def format_date_only(value) -> str:
     """Return a date object for date-like values, without timestamps."""
+    value = get_scalar_value(value)
     if pd.isna(value):
         return ""
     text_value = str(value).strip()
@@ -325,6 +392,7 @@ def format_date_only(value) -> str:
 
 def clean_text_value(value) -> str:
     """Return empty string for blank/NaN-like text values."""
+    value = get_scalar_value(value)
     if pd.isna(value):
         return ""
     text_value = str(value).strip()
@@ -429,6 +497,8 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
     """
     df = standardize_input_columns(df)
     df = drop_last_input_row(df)
+    azure_group_keys = build_azure_group_keys(df)
+    processed_azure_groups = set()
     errors = []
     output_rows = []
     today = datetime.today().date()
@@ -438,7 +508,7 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             out_row = {}
             
             # Get Invoice No. (as-is from input)
-            invoice_no = str(row.get("Invoice No.", "")).strip()
+            invoice_no = str(get_scalar_value(row.get("Invoice No.", ""))).strip()
             out_row["Invoice No."] = invoice_no
             
             # Document Location from Invoice No. prefix
@@ -448,30 +518,31 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             out_row["Delivery Location Code"] = get_delivery_location_code(doc_location)
             
             # Customer info (as-is from input)
-            out_row["Customer Code"] = clean_text_value(row.get("Customer Code", ""))
-            out_row["Customer Name"] = clean_text_value(row.get("Customer Name", ""))
-            out_row["_Invoice Type"] = clean_text_value(row.get("Invoice Type", ""))
+            out_row["Customer Code"] = clean_text_value(get_scalar_value(row.get("Customer Code", "")))
+            out_row["Customer Name"] = clean_text_value(get_scalar_value(row.get("Customer Name", "")))
+            out_row["_Invoice Type"] = clean_text_value(get_scalar_value(row.get("Invoice Type", "")))
             
             # Dates
-            out_row["_Source Invoice Date"] = row.get("Invoice Date", "")
+            out_row["_Source Invoice Date"] = get_scalar_value(row.get("Invoice Date", ""))
             out_row["Invoice Date"] = today
             out_row["Delivery Date"] = today
             out_row["Annotation"] = ""
             
             # Currency from Invoice No. prefix
             out_row["Currency Code"] = get_currency_from_invoice_no(invoice_no)
+            raw_exchange_rate_input = get_scalar_value(row.get("Exchange Rate", ""))
             uploaded_exchange_rate = None
             try:
-                uploaded_exchange_rate = float(row.get("Exchange Rate", 0))
+                uploaded_exchange_rate = float(raw_exchange_rate_input)
             except (ValueError, TypeError):
                 uploaded_exchange_rate = None
             
             exchange_rate = get_exchange_rate(doc_location, uploaded_exchange_rate)
-            out_row["Exchange Rate"] = exchange_rate if exchange_rate != "" else ""
+            out_row["Exchange Rate"] = raw_exchange_rate_input if raw_exchange_rate_input != "" else (exchange_rate if exchange_rate != "" else "")
             
             # Fixed fields
             out_row["Shipment Mode"] = "EML"
-            out_row["Payment Term"] = extract_payment_term(str(row.get("Payment Method", "")))
+            out_row["Payment Term"] = extract_payment_term(str(get_scalar_value(row.get("Payment Method", ""))))
             out_row["Mode Of Payment"] = "OC"
             out_row["Status"] = "Unpaid"
             out_row["Credit Card Transaction No."] = ""
@@ -489,41 +560,78 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             out_row["HEADER Expense Value"] = ""
             
             # Subscription
-            ms_sub_id = clean_text_value(row.get("MS Subscription ID", ""))
+            ms_sub_id = clean_text_value(get_scalar_value(row.get("MS Subscription ID", "")))
             subscription_id_value = ms_sub_id if ms_sub_id else "Subs ID"
             out_row["Subscription Id"] = subscription_id_value
-            out_row["Billing Cycle Start Date"] = format_date_only(row.get("Billing Cycle Start Date", ""))
-            out_row["Billing Cycle End Date"] = format_date_only(row.get("Billing Cycle End Date", ""))
+            out_row["Billing Cycle Start Date"] = format_date_only(get_scalar_value(row.get("Billing Cycle Start Date", "")))
+            out_row["Billing Cycle End Date"] = format_date_only(get_scalar_value(row.get("Billing Cycle End Date", "")))
             
             # ITEM Code mapped from Charge Description
-            charge_desc = clean_text_value(row.get("Charge Description", ""))
-            item_code = get_item_code(charge_desc)
-            out_row["ITEM Code"] = item_code
-            
-            # ITEM Name = Charge Description + MS Subscription ID
-            out_row["ITEM Name"] = charge_desc + (f" ({subscription_id_value})" if subscription_id_value else "")
-            
-            # Fixed ITEM fields
-            out_row["UOM"] = "NOS"
-            out_row["Grade code-1"] = "NA"
-            out_row["Grade code-2"] = "NA"
-            
-            # Quantity and Price
-            quantity = row.get("Quantity", 0)
-            out_row["Quantity"] = quantity
-            out_row["Qty Loose"] = 0
-            
-            # Calculate Gross Value using the formula from input Rate Per Qty and Exchange Rate
-            rate_per_qty_input = row.get("Rate Per Qty", "")
-            exchange_rate_input = row.get("Exchange Rate", "")
-            if rate_per_qty_input != "" and exchange_rate_input != "" and quantity != "" and quantity != 0:
-                gross_value = calculate_gross_value(rate_per_qty_input, exchange_rate_input, quantity)
-                out_row["Gross Value"] = gross_value
-                rate_per_qty = calculate_rate_per_qty(gross_value, quantity)
-                out_row["Rate Per Qty"] = rate_per_qty
+            charge_desc = clean_text_value(get_scalar_value(row.get("Charge Description", "")))
+            invoice_no_key = str(get_scalar_value(row.get("Invoice No.", ""))).strip()
+            group_key = (invoice_no_key, subscription_id_value)
+
+            if group_key in azure_group_keys:
+                # Consolidate all same invoice + subscription Azure rows into one output row
+                if group_key in processed_azure_groups:
+                    continue
+
+                processed_azure_groups.add(group_key)
+                group_rows = df[
+                    df["Invoice No."].astype(str).str.strip().eq(invoice_no_key) &
+                    df["MS Subscription ID"].astype(str).str.strip().eq(subscription_id_value)
+                ]
+
+                azure_rows = group_rows[group_rows["Charge Description"].apply(is_azure_consumption_description)]
+                charge_desc = clean_text_value(
+                    azure_rows.iloc[0]["Charge Description"]
+                    if not azure_rows.empty
+                    else group_rows.iloc[0].get("Charge Description", "")
+                )
+                charge_desc = charge_desc or "Azure plan"
+                item_code = "MSAZ-CNS"
+                out_row["ITEM Code"] = item_code
+                out_row["ITEM Name"] = charge_desc + (f" ({subscription_id_value})" if subscription_id_value else "")
+
+                out_row["UOM"] = "NOS"
+                out_row["Grade code-1"] = "NA"
+                out_row["Grade code-2"] = "NA"
+
+                out_row["Quantity"] = 1
+                out_row["Qty Loose"] = 0
+
+                sum_gross = sum_group_gross_values(group_rows)
+                actual_exchange_rate = raw_exchange_rate_input if raw_exchange_rate_input != "" else exchange_rate
+                if sum_gross != Decimal("0") and actual_exchange_rate != "":
+                    gross_value = calculate_gross_value(sum_gross, actual_exchange_rate, 1)
+                    out_row["Gross Value"] = gross_value
+                    out_row["Rate Per Qty"] = gross_value
+                else:
+                    out_row["Gross Value"] = ""
+                    out_row["Rate Per Qty"] = ""
             else:
-                out_row["Gross Value"] = ""
-                out_row["Rate Per Qty"] = ""
+                item_code = get_item_code(charge_desc)
+                out_row["ITEM Code"] = item_code
+                out_row["ITEM Name"] = charge_desc + (f" ({subscription_id_value})" if subscription_id_value else "")
+
+                out_row["UOM"] = "NOS"
+                out_row["Grade code-1"] = "NA"
+                out_row["Grade code-2"] = "NA"
+
+                quantity = get_scalar_value(row.get("Quantity", 0))
+                out_row["Quantity"] = quantity
+                out_row["Qty Loose"] = 0
+
+                rate_per_qty_input = get_scalar_value(row.get("Rate Per Qty", ""))
+                exchange_rate_input = get_scalar_value(row.get("Exchange Rate", ""))
+                if rate_per_qty_input != "" and exchange_rate_input != "" and quantity != "" and quantity != 0:
+                    gross_value = calculate_gross_value(rate_per_qty_input, exchange_rate_input, quantity)
+                    out_row["Gross Value"] = gross_value
+                    rate_per_qty = calculate_rate_per_qty(gross_value, quantity)
+                    out_row["Rate Per Qty"] = rate_per_qty
+                else:
+                    out_row["Gross Value"] = ""
+                    out_row["Rate Per Qty"] = ""
             
             # ITEM Discount fields (blank)
             out_row["ITEM Discount Code"] = ""
@@ -552,20 +660,20 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             out_row["ITEM Tax Value"] = tax_value
             
             # LPO and End User (as-is from input)
-            out_row["LPO Number"] = clean_text_value(row.get("LPO Number", ""))
+            out_row["LPO Number"] = clean_text_value(get_scalar_value(row.get("LPO Number", "")))
             out_row["End User"] = build_end_user_value(
-                row.get("End User", ""),
-                row.get("End Customer Country", ""),
+                get_scalar_value(row.get("End User", "")),
+                get_scalar_value(row.get("End Customer Country", "")),
             )
             
             # Cost source follows the same positive/credit-note split as Gross Value
             cost_col = find_column_with_prefix(df, "Unit Cost Transaction Currency")
             is_credit_note = is_negative_credit_note(row)
             if is_credit_note:
-                cost_value = round_to_2_decimals(row.get("Unit Cost", ""))
+                cost_value = round_to_2_decimals(get_scalar_value(row.get("Unit Cost", "")))
                 out_row["Cost"] = cost_value
             elif cost_col:
-                cost_value = round_to_2_decimals(row.get(cost_col, ""))
+                cost_value = round_to_2_decimals(get_scalar_value(row.get(cost_col, "")))
                 out_row["Cost"] = cost_value
             else:
                 out_row["Cost"] = ""
