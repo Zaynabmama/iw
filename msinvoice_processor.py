@@ -160,6 +160,7 @@ def standardize_input_columns(df: pd.DataFrame) -> pd.DataFrame:
     }
     alias_columns = {
         normalize_input_column_name("Azure Consumption Description"): "Charge Description",
+        normalize_input_column_name("End User Country"): "End Customer Country",
     }
     normalized_to_canonical.update(alias_columns)
     rename_map = {}
