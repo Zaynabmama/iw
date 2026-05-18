@@ -1,5 +1,7 @@
 import re
 
+import pdfplumber
+
 
 CASE_NO_PATTERN = re.compile(r"^(970[A-Z0-9]{10})(.*)$")
 ROW_START_PATTERN = re.compile(r"^\d+\s+\S+")
@@ -156,6 +158,74 @@ def extract_item_rows_from_ibm_text(ibm_text: str) -> list[dict]:
             parsed_items.append(parsed)
 
     return parsed_items
+
+
+def clean_cell(value) -> str:
+    if value is None:
+        return ""
+    return normalize_line(str(value).replace("\n", " "))
+
+
+def extract_item_rows_from_ibm_pdf(uploaded_file) -> list[dict]:
+    uploaded_file.seek(0)
+    parsed_items: list[dict] = []
+
+    with pdfplumber.open(uploaded_file) as pdf:
+        for page in pdf.pages:
+            for table in page.extract_tables():
+                if not table or not table[0]:
+                    continue
+
+                header = [clean_cell(cell) for cell in table[0]]
+                if "Part Number / Serial" not in header or "HS Code" not in header:
+                    continue
+
+                parts_for_value = ""
+                for row in table[1:]:
+                    cells = [clean_cell(cell) for cell in row]
+                    if len(cells) < 10:
+                        continue
+
+                    if cells[0] == "Case No" or cells[0].startswith("Company name"):
+                        break
+
+                    if cells[3].startswith("Parts for:"):
+                        parts_for_value = normalize_parts_for_value(cells[3])
+                        continue
+
+                    if not cells[0].isdigit() or not cells[2]:
+                        continue
+
+                    item_code = parts_for_value or cells[3]
+                    parts_for_item_code = parts_for_value or ""
+                    parts_for_value = ""
+
+                    qty = parse_decimal(cells[7]) if cells[7] else 0
+                    total_price = parse_decimal(cells[9]) if cells[9] else 0
+                    unit_price = total_price / qty if qty else 0
+
+                    parsed = {
+                        "line_no": cells[0],
+                        "order_no": cells[1],
+                        "case_no": cells[2],
+                        "item_code": item_code,
+                        "hs_code": cells[4],
+                        "mibb_description": cells[5],
+                        "origin": cells[6],
+                        "qty": qty,
+                        "temp_unit_price": unit_price,
+                        "mibb_total_price": total_price,
+                    }
+                    if parts_for_item_code:
+                        parsed["parts_for_item_code"] = parts_for_item_code
+                    parsed_items.append(parsed)
+
+                if parsed_items:
+                    uploaded_file.seek(0)
+                    return parsed_items
+
+    uploaded_file.seek(0)
+    return []
 
 
 def clean_numeric_token(value: str) -> str:
