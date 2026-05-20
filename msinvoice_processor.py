@@ -377,6 +377,30 @@ def sum_group_gross_values(group_df: pd.DataFrame) -> Decimal:
     return total
 
 
+def get_row_cost_value(row: pd.Series, cost_col: Optional[str]):
+    """Return the source cost value for one row using the existing credit/debit rules."""
+    is_credit_note = is_negative_credit_note(row)
+    if is_credit_note:
+        return round_to_2_decimals(get_scalar_value(row.get("Unit Cost", "")))
+    if cost_col:
+        return round_to_2_decimals(get_scalar_value(row.get(cost_col, "")))
+    return ""
+
+
+def sum_group_cost_values(group_df: pd.DataFrame, cost_col: Optional[str]) -> Decimal:
+    """Sum source cost values from a group using Decimal precision."""
+    total = Decimal("0")
+    for _, group_row in group_df.iterrows():
+        value = get_row_cost_value(group_row, cost_col)
+        if pd.isna(value) or str(value).strip() == "":
+            continue
+        try:
+            total += Decimal(str(value))
+        except (ValueError, TypeError, InvalidOperation):
+            continue
+    return total
+
+
 def format_date_only(value) -> str:
     """Return a date object for date-like values, without timestamps."""
     value = get_scalar_value(value)
@@ -567,6 +591,8 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             out_row["Billing Cycle Start Date"] = format_date_only(get_scalar_value(row.get("Billing Cycle Start Date", "")))
             out_row["Billing Cycle End Date"] = format_date_only(get_scalar_value(row.get("Billing Cycle End Date", "")))
             
+            cost_col = find_column_with_prefix(df, "Unit Cost Transaction Currency")
+
             # ITEM Code mapped from Charge Description
             charge_desc = clean_text_value(get_scalar_value(row.get("Charge Description", "")))
             invoice_no_key = str(get_scalar_value(row.get("Invoice No.", ""))).strip()
@@ -610,6 +636,9 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
                 else:
                     out_row["Gross Value"] = ""
                     out_row["Rate Per Qty"] = ""
+
+                sum_cost = sum_group_cost_values(group_rows, cost_col)
+                out_row["Cost"] = float(sum_cost.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)) if sum_cost != Decimal("0") else ""
             else:
                 item_code = get_item_code(charge_desc)
                 out_row["ITEM Code"] = item_code
@@ -668,16 +697,8 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             )
             
             # Cost source follows the same positive/credit-note split as Gross Value
-            cost_col = find_column_with_prefix(df, "Unit Cost Transaction Currency")
-            is_credit_note = is_negative_credit_note(row)
-            if is_credit_note:
-                cost_value = round_to_2_decimals(get_scalar_value(row.get("Unit Cost", "")))
-                out_row["Cost"] = cost_value
-            elif cost_col:
-                cost_value = round_to_2_decimals(get_scalar_value(row.get(cost_col, "")))
-                out_row["Cost"] = cost_value
-            else:
-                out_row["Cost"] = ""
+            if group_key not in azure_group_keys:
+                out_row["Cost"] = get_row_cost_value(row, cost_col)
             
             output_rows.append(out_row)
             
