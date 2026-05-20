@@ -378,10 +378,7 @@ def sum_group_gross_values(group_df: pd.DataFrame) -> Decimal:
 
 
 def get_row_cost_value(row: pd.Series, cost_col: Optional[str]):
-    """Return the source cost value for one row using the existing credit/debit rules."""
-    is_credit_note = is_negative_credit_note(row)
-    if is_credit_note:
-        return round_to_2_decimals(get_scalar_value(row.get("Unit Cost", "")))
+    """Return the source cost value for one row from Total Cost Transaction columns."""
     if cost_col:
         return round_to_2_decimals(get_scalar_value(row.get(cost_col, "")))
     return ""
@@ -591,7 +588,7 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             out_row["Billing Cycle Start Date"] = format_date_only(get_scalar_value(row.get("Billing Cycle Start Date", "")))
             out_row["Billing Cycle End Date"] = format_date_only(get_scalar_value(row.get("Billing Cycle End Date", "")))
             
-            cost_col = find_column_with_prefix(df, "Unit Cost Transaction Currency")
+            cost_col = find_column_with_prefix(df, "Total Cost Transaction Currency")
 
             # ITEM Code mapped from Charge Description
             charge_desc = clean_text_value(get_scalar_value(row.get("Charge Description", "")))
@@ -696,7 +693,7 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
                 get_scalar_value(row.get("End Customer Country", "")),
             )
             
-            # Cost source follows the same positive/credit-note split as Gross Value
+            # Cost source comes from Total Cost Transaction columns
             if group_key not in azure_group_keys:
                 out_row["Cost"] = get_row_cost_value(row, cost_col)
             
