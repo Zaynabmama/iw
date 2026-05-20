@@ -25,7 +25,7 @@ INVOICE_PREFIX_MAP = {
 }
 
 INVOICE_CURRENCY_MAP = {
-    "DNKW": "KWT",
+    "DNKW": "KWD",
     "DNFZ": "USD",
     "DNQA": "QAR",
     "DNOM": "OMR",
