@@ -353,26 +353,56 @@ def build_azure_group_keys(df: pd.DataFrame) -> set:
     """Find invoice+subscription groups that should be consolidated as Azure."""
     group_keys = set()
     if "Invoice No." not in df.columns or "MS Subscription ID" not in df.columns or "Charge Description" not in df.columns:
+        logger.debug(
+            "Azure detection skipped because required columns are missing. Columns present: %s",
+            list(df.columns),
+        )
         return group_keys
 
     for _, row in df.iterrows():
         invoice_no = clean_text_value(get_scalar_value(row.get("Invoice No.", "")))
         ms_sub_id = clean_text_value(get_scalar_value(row.get("MS Subscription ID", "")))
-        if invoice_no and ms_sub_id and is_azure_consumption_description(get_scalar_value(row.get("Charge Description", ""))):
+        charge_description = get_scalar_value(row.get("Charge Description", ""))
+        is_azure_row = (
+            invoice_no and
+            ms_sub_id and
+            is_azure_consumption_description(charge_description)
+        )
+        logger.debug(
+            "Azure detection row: invoice=%s subscription=%s charge_description=%s matched=%s",
+            invoice_no,
+            ms_sub_id,
+            charge_description,
+            bool(is_azure_row),
+        )
+        if is_azure_row:
             group_keys.add((invoice_no, ms_sub_id))
 
+    logger.debug("Azure group keys built: %s", sorted(group_keys))
     return group_keys
 
 
 def sum_group_gross_values(group_df: pd.DataFrame) -> Decimal:
     """Sum input Gross Value from a group using Decimal precision."""
     total = Decimal("0")
-    for value in group_df.get("Gross Value", []):
+    for row_index, value in group_df.get("Gross Value", []).items():
         if pd.isna(value) or str(value).strip() == "":
+            logger.debug("Azure gross sum skipped empty value at source row index=%s", row_index)
             continue
         try:
             total += Decimal(str(value))
+            logger.debug(
+                "Azure gross sum added source row index=%s gross_value=%s running_total=%s",
+                row_index,
+                value,
+                total,
+            )
         except (ValueError, TypeError, InvalidOperation):
+            logger.debug(
+                "Azure gross sum skipped invalid value at source row index=%s gross_value=%s",
+                row_index,
+                value,
+            )
             continue
     return total
 
@@ -380,7 +410,19 @@ def sum_group_gross_values(group_df: pd.DataFrame) -> Decimal:
 def get_row_cost_value(row: pd.Series, cost_col: Optional[str]):
     """Return the source cost value for one row from Total Cost Transaction columns."""
     if cost_col:
-        return round_to_2_decimals(get_scalar_value(row.get(cost_col, "")))
+        cost_value = round_to_2_decimals(get_scalar_value(row.get(cost_col, "")))
+        logger.debug(
+            "Azure cost source row index=%s cost_column=%s raw_value=%s rounded_value=%s",
+            getattr(row, "name", None),
+            cost_col,
+            get_scalar_value(row.get(cost_col, "")),
+            cost_value,
+        )
+        return cost_value
+    logger.debug(
+        "Azure cost source missing Total Cost Transaction column for source row index=%s",
+        getattr(row, "name", None),
+    )
     return ""
 
 
@@ -390,10 +432,25 @@ def sum_group_cost_values(group_df: pd.DataFrame, cost_col: Optional[str]) -> De
     for _, group_row in group_df.iterrows():
         value = get_row_cost_value(group_row, cost_col)
         if pd.isna(value) or str(value).strip() == "":
+            logger.debug(
+                "Azure cost sum skipped empty value at source row index=%s",
+                getattr(group_row, "name", None),
+            )
             continue
         try:
             total += Decimal(str(value))
+            logger.debug(
+                "Azure cost sum added source row index=%s cost_value=%s running_total=%s",
+                getattr(group_row, "name", None),
+                value,
+                total,
+            )
         except (ValueError, TypeError, InvalidOperation):
+            logger.debug(
+                "Azure cost sum skipped invalid value at source row index=%s cost_value=%s",
+                getattr(group_row, "name", None),
+                value,
+            )
             continue
     return total
 
@@ -524,6 +581,12 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
     errors = []
     output_rows = []
     today = datetime.today().date()
+    logger.debug(
+        "MS invoice processing started: input_rows=%s azure_group_count=%s azure_groups=%s",
+        len(df),
+        len(azure_group_keys),
+        sorted(azure_group_keys),
+    )
     
     for idx, row in df.iterrows():
         try:
@@ -594,10 +657,23 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             charge_desc = clean_text_value(get_scalar_value(row.get("Charge Description", "")))
             invoice_no_key = str(get_scalar_value(row.get("Invoice No.", ""))).strip()
             group_key = (invoice_no_key, subscription_id_value)
+            logger.debug(
+                "Processing source row index=%s invoice=%s subscription=%s charge_description=%s azure_group_match=%s",
+                idx,
+                invoice_no_key,
+                subscription_id_value,
+                charge_desc,
+                group_key in azure_group_keys,
+            )
 
             if group_key in azure_group_keys:
                 # Consolidate all same invoice + subscription Azure rows into one output row
                 if group_key in processed_azure_groups:
+                    logger.debug(
+                        "Azure group already processed, skipping source row index=%s group_key=%s",
+                        idx,
+                        group_key,
+                    )
                     continue
 
                 processed_azure_groups.add(group_key)
@@ -605,6 +681,12 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
                     df["Invoice No."].astype(str).str.strip().eq(invoice_no_key) &
                     df["MS Subscription ID"].astype(str).str.strip().eq(subscription_id_value)
                 ]
+                logger.debug(
+                    "Azure group start: group_key=%s source_row_indexes=%s row_count=%s",
+                    group_key,
+                    list(group_rows.index),
+                    len(group_rows),
+                )
 
                 azure_rows = group_rows[group_rows["Charge Description"].apply(is_azure_consumption_description)]
                 charge_desc = clean_text_value(
@@ -613,6 +695,12 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
                     else group_rows.iloc[0].get("Charge Description", "")
                 )
                 charge_desc = charge_desc or "Azure plan"
+                logger.debug(
+                    "Azure group description resolved: group_key=%s azure_row_indexes=%s final_charge_description=%s",
+                    group_key,
+                    list(azure_rows.index),
+                    charge_desc,
+                )
                 item_code = "MSAZ-CNS"
                 out_row["ITEM Code"] = item_code
                 out_row["ITEM Name"] = charge_desc + (f" ({subscription_id_value})" if subscription_id_value else "")
@@ -626,16 +714,53 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
 
                 sum_gross = sum_group_gross_values(group_rows)
                 actual_exchange_rate = raw_exchange_rate_input if raw_exchange_rate_input != "" else exchange_rate
+                logger.debug(
+                    "Azure gross preparation: group_key=%s summed_input_gross=%s raw_exchange_rate_input=%s fallback_exchange_rate=%s actual_exchange_rate=%s",
+                    group_key,
+                    sum_gross,
+                    raw_exchange_rate_input,
+                    exchange_rate,
+                    actual_exchange_rate,
+                )
                 if sum_gross != Decimal("0") and actual_exchange_rate != "":
                     gross_value = calculate_gross_value(sum_gross, actual_exchange_rate, 1)
                     out_row["Gross Value"] = gross_value
                     out_row["Rate Per Qty"] = gross_value
+                    logger.debug(
+                        "Azure gross final: group_key=%s quantity=1 gross_value=%s rate_per_qty=%s",
+                        group_key,
+                        gross_value,
+                        gross_value,
+                    )
                 else:
                     out_row["Gross Value"] = ""
                     out_row["Rate Per Qty"] = ""
+                    logger.debug(
+                        "Azure gross final: group_key=%s gross calculation skipped because summed_input_gross=%s actual_exchange_rate=%s",
+                        group_key,
+                        sum_gross,
+                        actual_exchange_rate,
+                    )
 
                 sum_cost = sum_group_cost_values(group_rows, cost_col)
                 out_row["Cost"] = float(sum_cost.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)) if sum_cost != Decimal("0") else ""
+                logger.debug(
+                    "Azure cost final: group_key=%s cost_column=%s summed_cost=%s output_cost=%s",
+                    group_key,
+                    cost_col,
+                    sum_cost,
+                    out_row["Cost"],
+                )
+                logger.debug(
+                    "Azure output row ready: group_key=%s item_code=%s item_name=%s quantity=%s gross_value=%s rate_per_qty=%s cost=%s",
+                    group_key,
+                    out_row.get("ITEM Code", ""),
+                    out_row.get("ITEM Name", ""),
+                    out_row.get("Quantity", ""),
+                    out_row.get("Gross Value", ""),
+                    out_row.get("Rate Per Qty", ""),
+                    out_row.get("Cost", ""),
+                )
             else:
                 item_code = get_item_code(charge_desc)
                 out_row["ITEM Code"] = item_code
