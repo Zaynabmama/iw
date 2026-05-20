@@ -195,10 +195,16 @@ def get_scalar_value(value, default=""):
 
 
 def drop_last_input_row(df: pd.DataFrame) -> pd.DataFrame:
-    """Ignore the last row of the uploaded file, if any rows exist."""
+    """Drop the last row only when its Invoice No. is empty."""
     if df.empty:
         return df
-    return df.iloc[:-1].copy()
+    if "Invoice No." not in df.columns:
+        return df
+
+    last_invoice_no = clean_text_value(get_scalar_value(df.iloc[-1].get("Invoice No.", "")))
+    if last_invoice_no == "":
+        return df.iloc[:-1].copy()
+    return df
 
 def get_document_location(invoice_no: str) -> str:
     """Extract Document Location from Invoice No. prefix"""
@@ -623,7 +629,8 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
                 uploaded_exchange_rate = None
             
             exchange_rate = get_exchange_rate(doc_location, uploaded_exchange_rate)
-            out_row["Exchange Rate"] = raw_exchange_rate_input if raw_exchange_rate_input != "" else (exchange_rate if exchange_rate != "" else "")
+            output_exchange_rate = EXCHANGE_RATE_MAP.get(doc_location, "")
+            out_row["Exchange Rate"] = output_exchange_rate if output_exchange_rate != "" else ""
             
             # Fixed fields
             out_row["Shipment Mode"] = "EML"
@@ -804,7 +811,7 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             tax_percent = TAX_PERCENT_MAP.get(doc_location, "")
             out_row["ITEM Tax %"] = tax_percent
             out_row["ITEM Tax Currency"] = CURRENCY_MAP.get(doc_location, "")
-            out_row["ITEM Tax Basis"] = ""
+            out_row["ITEM Tax Basis"] = "R"
             
             # ITEM Tax Value = Gross Value * Tax %
             gross_value_str = out_row.get("Gross Value", "")
