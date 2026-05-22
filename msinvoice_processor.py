@@ -529,6 +529,35 @@ def build_end_user_value(end_user, end_customer_country) -> str:
     return ""
 
 
+def build_item_name(charge_desc, subscription_id, item_code, billing_start, billing_end) -> str:
+    """Build ITEM Name without blank/placeholder fragments."""
+    description = clean_text_value(charge_desc)
+    subscription = clean_text_value(subscription_id)
+    code = clean_text_value(item_code)
+
+    parts = []
+
+    if description:
+        if subscription:
+            parts.append(f"{description} ({subscription})")
+        else:
+            parts.append(description)
+
+    if code:
+        parts.append(code)
+
+    start_text = clean_text_value(billing_start)
+    end_text = clean_text_value(billing_end)
+    if start_text and end_text:
+        parts.append(f"{start_text} to {end_text}")
+    elif start_text:
+        parts.append(start_text)
+    elif end_text:
+        parts.append(end_text)
+
+    return " | ".join(parts)
+
+
 def calculate_tax_value(gross_value: float, tax_percent: float) -> str:
     """Calculate Tax Value = Gross Value * Tax %"""
     try:
@@ -727,7 +756,13 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
                 )
                 item_code = "MSAZ-CNS"
                 out_row["ITEM Code"] = item_code
-                out_row["ITEM Name"] = charge_desc + (f" ({subscription_id_value})" if subscription_id_value else "")
+                out_row["ITEM Name"] = build_item_name(
+                    charge_desc,
+                    ms_sub_id,
+                    item_code,
+                    out_row["Billing Cycle Start Date"],
+                    out_row["Billing Cycle End Date"],
+                )
 
                 out_row["UOM"] = "NOS"
                 out_row["Grade code-1"] = "NA"
@@ -789,7 +824,13 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             else:
                 item_code = get_item_code(charge_desc)
                 out_row["ITEM Code"] = item_code
-                out_row["ITEM Name"] = charge_desc + (f" ({subscription_id_value})" if subscription_id_value else "")
+                out_row["ITEM Name"] = build_item_name(
+                    charge_desc,
+                    ms_sub_id,
+                    item_code,
+                    out_row["Billing Cycle Start Date"],
+                    out_row["Billing Cycle End Date"],
+                )
 
                 out_row["UOM"] = "NOS"
                 out_row["Grade code-1"] = "NA"
