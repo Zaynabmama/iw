@@ -152,6 +152,7 @@ def standardize_input_columns(df: pd.DataFrame) -> pd.DataFrame:
         "Exchange Rate",
         "Gross Value",
         "Unit Cost",
+        "Product Code",
         "ITEM Code",
     ]
 
@@ -529,11 +530,11 @@ def build_end_user_value(end_user, end_customer_country) -> str:
     return ""
 
 
-def build_item_name(charge_desc, subscription_id, item_code, billing_start, billing_end) -> str:
+def build_item_name(charge_desc, subscription_id, product_code, billing_start, billing_end) -> str:
     """Build ITEM Name without blank/placeholder fragments."""
     description = clean_text_value(charge_desc)
     subscription = clean_text_value(subscription_id)
-    code = clean_text_value(item_code)
+    code = clean_text_value(product_code)
 
     parts = []
 
@@ -742,11 +743,9 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
                 )
 
                 azure_rows = group_rows[group_rows["Charge Description"].apply(is_azure_consumption_description)]
-                charge_desc = clean_text_value(
-                    azure_rows.iloc[0]["Charge Description"]
-                    if not azure_rows.empty
-                    else group_rows.iloc[0].get("Charge Description", "")
-                )
+                azure_source_row = azure_rows.iloc[0] if not azure_rows.empty else group_rows.iloc[0]
+                charge_desc = clean_text_value(azure_source_row.get("Charge Description", ""))
+                product_code = clean_text_value(azure_source_row.get("Product Code", ""))
                 charge_desc = charge_desc or "Azure plan"
                 logger.debug(
                     "Azure group description resolved: group_key=%s azure_row_indexes=%s final_charge_description=%s",
@@ -759,7 +758,7 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
                 out_row["ITEM Name"] = build_item_name(
                     charge_desc,
                     ms_sub_id,
-                    item_code,
+                    product_code,
                     out_row["Billing Cycle Start Date"],
                     out_row["Billing Cycle End Date"],
                 )
@@ -823,11 +822,12 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
                 )
             else:
                 item_code = get_item_code(charge_desc)
+                product_code = clean_text_value(get_scalar_value(row.get("Product Code", "")))
                 out_row["ITEM Code"] = item_code
                 out_row["ITEM Name"] = build_item_name(
                     charge_desc,
                     ms_sub_id,
-                    item_code,
+                    product_code,
                     out_row["Billing Cycle Start Date"],
                     out_row["Billing Cycle End Date"],
                 )
