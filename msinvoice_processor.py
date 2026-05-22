@@ -323,6 +323,23 @@ def calculate_rate_per_qty(gross_value_value, quantity):
         return ""
 
 
+def calculate_cost_per_qty(cost_value, quantity):
+    """Calculate output Cost as cost divided by output Quantity, rounded half-up to 2 decimals."""
+    try:
+        if pd.isna(cost_value) or pd.isna(quantity) or quantity == "" or quantity == 0:
+            return ""
+
+        cost = Decimal(str(cost_value))
+        qty = Decimal(str(quantity))
+
+        if qty == 0:
+            return ""
+
+        return float((cost / qty).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+    except (ValueError, TypeError, InvalidOperation, ZeroDivisionError):
+        return ""
+
+
 def calculate_gross_value(rate_per_qty, exchange_rate, quantity):
     """Calculate Gross Value = ROUND(ROUND(rate_per_qty * exchange_rate, 2) * quantity, 2) using half-up rounding."""
     try:
@@ -750,7 +767,8 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
                     )
 
                 sum_cost = sum_group_cost_values(group_rows, cost_col)
-                out_row["Cost"] = float(sum_cost.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)) if sum_cost != Decimal("0") else ""
+                rounded_group_cost = float(sum_cost.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)) if sum_cost != Decimal("0") else ""
+                out_row["Cost"] = calculate_cost_per_qty(rounded_group_cost, out_row["Quantity"])
                 logger.debug(
                     "Azure cost final: group_key=%s cost_column=%s summed_cost=%s output_cost=%s",
                     group_key,
@@ -827,7 +845,7 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             
             # Cost source comes from Total Cost Transaction columns
             if group_key not in azure_group_keys:
-                out_row["Cost"] = get_row_cost_value(row, cost_col)
+                out_row["Cost"] = calculate_cost_per_qty(get_row_cost_value(row, cost_col), out_row["Quantity"])
             
             output_rows.append(out_row)
             
