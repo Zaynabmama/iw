@@ -710,7 +710,7 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             # ITEM Code mapped from Charge Description
             charge_desc = clean_text_value(get_scalar_value(row.get("Charge Description", "")))
             invoice_no_key = str(get_scalar_value(row.get("Invoice No.", ""))).strip()
-            group_key = (invoice_no_key, subscription_id_value)
+            group_key = (invoice_no_key, ms_sub_id)
             is_azure_row = is_azure_consumption_description(charge_desc)
             logger.debug(
                 "Processing source row index=%s invoice=%s subscription=%s charge_description=%s azure_group_match=%s azure_row=%s",
