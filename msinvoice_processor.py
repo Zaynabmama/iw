@@ -722,8 +722,9 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
                 is_azure_row,
             )
 
-            if group_key in azure_group_keys and is_azure_row:
+            if group_key in azure_group_keys:
                 # Consolidate all same invoice + subscription Azure rows into one output row
+                # (including rows with missing/NaN charge descriptions)
                 if group_key in processed_azure_groups:
                     logger.debug(
                         "Azure group already processed, skipping source row index=%s group_key=%s",
