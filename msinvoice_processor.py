@@ -362,8 +362,8 @@ def is_azure_consumption_description(value) -> bool:
     """Detect Azure consumption description text used to identify Azure invoice groups."""
     if pd.isna(value):
         return False
-    text_value = str(value).strip().lower()
-    if text_value == "":
+    text_value = re.sub(r"\s+", " ", str(value).strip().lower())
+    if text_value == "" or text_value == "azure plan reserved instances":
         return False
     return any(keyword in text_value for keyword in [
         "azure plan",
@@ -711,16 +711,18 @@ def process_ms_invoice_file(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
             charge_desc = clean_text_value(get_scalar_value(row.get("Charge Description", "")))
             invoice_no_key = str(get_scalar_value(row.get("Invoice No.", ""))).strip()
             group_key = (invoice_no_key, subscription_id_value)
+            is_azure_row = is_azure_consumption_description(charge_desc)
             logger.debug(
-                "Processing source row index=%s invoice=%s subscription=%s charge_description=%s azure_group_match=%s",
+                "Processing source row index=%s invoice=%s subscription=%s charge_description=%s azure_group_match=%s azure_row=%s",
                 idx,
                 invoice_no_key,
                 subscription_id_value,
                 charge_desc,
                 group_key in azure_group_keys,
+                is_azure_row,
             )
 
-            if group_key in azure_group_keys:
+            if group_key in azure_group_keys and is_azure_row:
                 # Consolidate all same invoice + subscription Azure rows into one output row
                 if group_key in processed_azure_groups:
                     logger.debug(
