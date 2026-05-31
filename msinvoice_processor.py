@@ -938,6 +938,13 @@ def validate_input_file(df: pd.DataFrame) -> Tuple[bool, list]:
         errors.append(f"Missing required columns: {', '.join(missing_cols)}")
         return False, errors
 
+    blank_customer_code_rows = find_blank_rows(df, "Customer Code")
+    if blank_customer_code_rows:
+        errors.append(
+            "Customer Code is mandatory and cannot be blank. "
+            f"Blank value found on row(s): {', '.join(map(str, blank_customer_code_rows))}"
+        )
+
     blank_customer_name_rows = find_blank_rows(df, "Customer Name")
     if blank_customer_name_rows:
         errors.append(
