@@ -84,6 +84,8 @@ KEYWORD_MAP = {
     ("m365", "microsoft 365", "office 365", "exchange online", "Microsoft Defender for Endpoint P1", "MS-CNS"): "MS-CNS",
     ("POWERPLATFORM - Power Apps Premium (New Commerce)", "powerapps premium", "power apps premium", "Power Apps Premium", "MS-CNS"): "MS-CNS",
     ("POWERPLATFORM - Power Automate per user plan (New Commerce)", "power automate per user", "Power Automate per user", "MS-CNS"): "MS-CNS",
+    ("POWERPLATFORM - Power Automate unattended RPA add-on (New Commerce)","MS-CNS"): "MS-CNS",
+    ("Office LTSC Professional Plus 2024 (Commercial)","MSPER-CNS"): "MSPER-CNS",
     ("Excel LTSC 2024", "excel ltsc", "MSPER-CNS"): "MSPER-CNS",
     ("Project Professional 2024 (Commercial) (Subs ID)", "project professional 2024", "MSPER-CNS"): "MSPER-CNS",
     ("SQL Server 2025 - 1 User CAL (Commercial)", "sql server 2025 - 1 user cal", "MSPER-CNS"): "MSPER-CNS",
