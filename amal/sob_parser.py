@@ -18,6 +18,21 @@ def extract_inline_value(text: str, label: str, next_labels: list[str] | None = 
     return normalize_whitespace(match.group(1))
 
 
+def extract_money_value(text: str, label: str) -> str:
+    pattern = rf"(?m)^\s*{re.escape(label)}\s*:\s*([\d,]+(?:\.\d+)?)\s*$"
+    match = re.search(pattern, text)
+    if not match:
+        return ""
+    return match.group(1).strip()
+
+
+def extract_freight_charges_value(text: str) -> str:
+    match = re.search(r"Freight Charges[^\d\r\n]*:\s*([\d,]+(?:\.\d+)?)", text, flags=re.I)
+    if not match:
+        return ""
+    return match.group(1).strip()
+
+
 def extract_block(text: str, start_marker: str, end_marker: str) -> str:
     pattern = rf"{re.escape(start_marker)}\s*(.*?)(?={re.escape(end_marker)})"
     match = re.search(pattern, text, flags=re.S)
@@ -29,8 +44,75 @@ def extract_block(text: str, start_marker: str, end_marker: str) -> str:
     return "\n".join(clean_lines).strip()
 
 
+def split_merged_contact_and_company(line: str) -> list[str]:
+    match = re.match(r"^(.*\d)([A-Z][A-Z '&().,/:-]{5,})$", line)
+    if match:
+        left = match.group(1).strip()
+        right = match.group(2).strip()
+        if left and right:
+            return [left, right]
+
+    match = re.match(r"^(.*\d)([A-Z][A-Za-z].+)$", line)
+    if not match:
+        return [line]
+
+    left = match.group(1).strip()
+    right = match.group(2).strip()
+    if not left or not right:
+        return [line]
+
+    upper_right = f" {right.upper()}"
+    company_markers = (" SA", " LLC", " LTD", " TRANSIT", " BANK", " COMPANY", " INTERNATIONAL")
+    if any(marker in upper_right for marker in company_markers):
+        return [left, right]
+
+    return [line]
+
+
+def is_likely_company_line(line: str) -> bool:
+    candidate = line.strip()
+    if not candidate or "@" in candidate or any(char.isdigit() for char in candidate):
+        return False
+
+    upper_candidate = candidate.upper()
+    company_markers = (
+        " BANK",
+        " SA",
+        " LLC",
+        " LTD",
+        " TRANSIT",
+        " LOGISTICS",
+        " GROUP",
+        " COMPANY",
+        " INTERNATIONAL",
+    )
+    if any(marker in f" {upper_candidate}" for marker in company_markers):
+        return True
+
+    letters_only = re.sub(r"[^A-Za-z]", "", candidate)
+    if len(letters_only) < 6:
+        return False
+
+    uppercase_ratio = sum(1 for char in letters_only if char.isupper()) / len(letters_only)
+    return uppercase_ratio >= 0.8
+
+
+def normalize_address_block(value: str) -> str:
+    lines = [line.strip() for line in value.splitlines() if line.strip()]
+    normalized_lines: list[str] = []
+    for line in lines:
+        if line in {"TRN:NATRN:NA", "TRN:NA"}:
+            continue
+        normalized_lines.append(line)
+    return "\n".join(normalized_lines).strip()
+
+
 def split_bill_to_ship_to(block: str) -> tuple[str, str]:
-    lines = [line.strip() for line in block.splitlines() if line.strip()]
+    raw_lines = [line.strip() for line in block.splitlines() if line.strip()]
+    lines: list[str] = []
+    for line in raw_lines:
+        lines.extend(split_merged_contact_and_company(line))
+
     if not lines:
         return "", ""
 
@@ -41,8 +123,20 @@ def split_bill_to_ship_to(block: str) -> tuple[str, str]:
             break
 
     if separator_index is None:
+        for index, line in enumerate(lines[1:], start=1):
+            if not is_likely_company_line(line):
+                continue
+
+            prior_lines = lines[:index]
+            if any("@" in prior_line for prior_line in prior_lines) or sum(
+                any(char.isdigit() for char in prior_line) for prior_line in prior_lines
+            ) >= 2:
+                separator_index = index
+                break
+
+    if separator_index is None:
         midpoint = max(1, len(lines) // 2)
-        return "\n".join(lines[:midpoint]), "\n".join(lines[midpoint:])
+        return normalize_address_block("\n".join(lines[:midpoint])), normalize_address_block("\n".join(lines[midpoint:]))
 
     bill_to_lines = lines[:separator_index]
     ship_to_lines = lines[separator_index:]
@@ -50,7 +144,10 @@ def split_bill_to_ship_to(block: str) -> tuple[str, str]:
         cleaned_first_line = re.sub(r"^.*?(GROUPEMENT INTERBANCAIRE)", r"\1", ship_to_lines[0], flags=re.I)
         ship_to_lines[0] = cleaned_first_line
 
-    return "\n".join(bill_to_lines).strip(), "\n".join(ship_to_lines).strip()
+    bill_to = normalize_address_block("\n".join(bill_to_lines))
+    ship_to = normalize_address_block("\n".join(ship_to_lines))
+
+    return bill_to, ship_to
 
 
 def extract_comm_inv_fields_from_sob(sob_text: str) -> dict:
@@ -63,7 +160,8 @@ def extract_comm_inv_fields_from_sob(sob_text: str) -> dict:
         "customer_po": extract_inline_value(sob_text, "Customer PO", ["Remarks"]),
         "commercial_invoice_no": extract_inline_value(sob_text, "Order No", ["Order Date"]),
         "currency": extract_inline_value(sob_text, "Currency", ["Customer PO"]),
-        "freight_charges": extract_inline_value(sob_text, "Freight Charges ®", ["VAT"]),
+        "freight_charges": extract_freight_charges_value(sob_text),
+        "sob_total": extract_money_value(sob_text, "Total"),
         "total_in_words": extract_inline_value(sob_text, "Amount in Words", ["Bank Details"]),
         "bill_to": bill_to,
         "ship_to": ship_to,
@@ -83,6 +181,22 @@ def parse_decimal(value: str) -> float:
 
 def normalize_item_code(value: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", value.upper())
+
+
+def split_sob_item_code_and_description(body: str) -> tuple[str, str]:
+    compact_match = re.match(r"^(?P<digits>\d{6,8})(?P<desc>[A-Z].*)$", body)
+    if compact_match:
+        item_code = compact_match.group("digits").strip()
+        description = normalize_whitespace(compact_match.group("desc"))
+        return item_code, description
+
+    body_match = re.match(r"^(?P<item_code>[A-Z0-9-]+)(?P<description>.*)$", body)
+    if not body_match:
+        return "", ""
+
+    item_code = body_match.group("item_code").strip()
+    description = normalize_whitespace(body_match.group("description"))
+    return item_code, description
 
 
 def get_group_code(item_code: str) -> str:
@@ -147,12 +261,9 @@ def parse_sob_line_item(row_text: str) -> dict | None:
         return None
 
     body = tail_match.group("body")
-    body_match = re.match(r"^(?P<item_code>[A-Z0-9-]+)(?P<description>.*)$", body)
-    if not body_match:
+    item_code, description = split_sob_item_code_and_description(body)
+    if not item_code:
         return None
-
-    item_code = body_match.group("item_code").strip()
-    description = normalize_whitespace(body_match.group("description"))
 
     return {
         "line_no": match.group("line_no"),
@@ -171,12 +282,13 @@ def map_ibm_items_to_sob(ibm_items: list[dict], sob_items: list[dict]) -> tuple[
     for ibm_item in ibm_items:
         base_code = ibm_item.get("item_code", "").split("/")[0].strip()
         base_normalized = normalize_item_code(base_code)
+        has_serial_suffix = "/" in ibm_item.get("item_code", "")
         prefix_matches = [
             sob_item
             for sob_item in sob_items
             if sob_item["normalized_item_code"].startswith(base_normalized)
         ]
-        exact_match = next(
+        exact_match = None if has_serial_suffix else next(
             (sob_item for sob_item in sob_items if sob_item["normalized_item_code"] == base_normalized),
             None,
         )
@@ -186,11 +298,13 @@ def map_ibm_items_to_sob(ibm_items: list[dict], sob_items: list[dict]) -> tuple[
             description = exact_match["description"]
         elif prefix_matches:
             description = prefix_matches[0]["description"]
+        elif ibm_item.get("mibb_description"):
+            description = ibm_item.get("mibb_description", "")
 
         is_parts_for_item = bool(ibm_item.get("parts_for_item_code"))
         if is_parts_for_item:
             amount = 0.0
-            description = ibm_item.get("mibb_description", "")
+            description = ibm_item.get("original_item_code", "")
         else:
             amount = round(sum(sob_item["total"] for sob_item in prefix_matches), 2)
             for sob_item in prefix_matches:
