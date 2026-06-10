@@ -1,6 +1,11 @@
 import re
 
-import pdfplumber
+try:
+    import pdfplumber
+except ModuleNotFoundError:  # pragma: no cover - handled in Cloud deployments
+    pdfplumber = None
+
+from amal.pdf_utils import extract_text_from_pdf
 
 
 CASE_NO_PATTERN = re.compile(r"^(970[A-Z0-9]{10})(.*)$")
@@ -199,6 +204,10 @@ def clean_cell(value) -> str:
 
 def extract_item_rows_from_ibm_pdf(uploaded_file) -> list[dict]:
     uploaded_file.seek(0)
+
+    if pdfplumber is None:
+        return extract_item_rows_from_ibm_text(extract_text_from_pdf(uploaded_file))
+
     parsed_items: list[dict] = []
 
     with pdfplumber.open(uploaded_file) as pdf:
