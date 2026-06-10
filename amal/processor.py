@@ -19,10 +19,18 @@ try:
     )
     from .workbook_builder import create_workbook_bytes
 except ImportError:
-    from ibm_parser import extract_case_details_from_ibm_text, extract_item_rows_from_ibm_pdf, extract_item_rows_from_ibm_text
-    from pdf_utils import extract_text_from_pdf
-    from sob_parser import extract_comm_inv_fields_from_sob, extract_sob_line_items, map_ibm_items_to_sob
-    from workbook_builder import create_workbook_bytes
+    from amal.ibm_parser import (
+        extract_case_details_from_ibm_text,
+        extract_item_rows_from_ibm_pdf,
+        extract_item_rows_from_ibm_text,
+    )
+    from amal.pdf_utils import extract_text_from_pdf
+    from amal.sob_parser import (
+        extract_comm_inv_fields_from_sob,
+        extract_sob_line_items,
+        map_ibm_items_to_sob,
+    )
+    from amal.workbook_builder import create_workbook_bytes
 
 
 @dataclass
