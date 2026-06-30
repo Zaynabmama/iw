@@ -206,7 +206,7 @@ def create_ms_srcl_file(
             )
         )
         rate = abs(_round_2(local_gross / qty)) if qty else 0.0
-        unit_cost = abs(_round_2(row.get("Cost", 0)))
+        unit_cost = abs(_round_2(row.get("Cost", 0) or 0))
         total = abs(_round_2(qty * rate))
 
         ws_item.append([
