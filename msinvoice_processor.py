@@ -276,9 +276,10 @@ def get_exchange_rate(document_location: str, uploaded_exchange_rate: float = No
 
 
 def find_column_with_prefix(df: pd.DataFrame, prefix: str) -> Optional[str]:
-    """Find column name that starts with given prefix"""
+    """Find column name that starts with given prefix (case-insensitive)."""
+    prefix_lower = prefix.lower()
     for col in df.columns:
-        if str(col).startswith(prefix):
+        if str(col).lower().startswith(prefix_lower):
             return col
     return None
 
